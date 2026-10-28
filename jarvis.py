@@ -16,6 +16,7 @@ import time
 import webbrowser
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote_plus
 from tkinter import END, StringVar, Tk, messagebox
 from tkinter import ttk
 import tkinter as tk
@@ -59,13 +60,24 @@ class Jarvis(Tk):
         self.listen_text = StringVar(value="VOICE INPUT READY")
         self.speech_queue: queue.Queue[str | None] = queue.Queue()
         self.speech_available = False
-        self.active_timers: dict[int, str] = {}
+        self.microphone_available = False
+        self.listening = False
+        self.speech_enabled = True
+        self.active_timers: dict[int, dict] = {}
+        self.timer_serial = 0
+        self.timer_update_job = None
+        self.activity: list[dict[str, str]] = []
+        self.command_history: list[str] = []
+        self.history_cursor = 0
+        self.current_view = "home"
         self._setup_style()
         self._build()
+        self.bind("<Control-l>", lambda _e: self._focus_with(""))
         self._refresh_clock()
         self._refresh_system()
         self._render_notes()
         threading.Thread(target=self._speech_worker, daemon=True).start()
+        threading.Thread(target=self._voice_package_check_worker, daemon=True).start()
         self.protocol("WM_DELETE_WINDOW", self._close)
 
     def _setup_style(self) -> None:
@@ -104,39 +116,46 @@ class Jarvis(Tk):
                  font=(FONT, 13, "bold")).pack(side="left")
         tk.Label(self.sidebar, text="PERSONAL SYSTEM", bg=SIDE, fg="#567080",
                  font=(FONT, 8, "bold")).pack(anchor="w", padx=7, pady=(0, 10))
-        for label, icon, active in (("Command center", "âŒ˜", True), ("My notes", "â–¤", False), ("Timers", "â—·", False)):
-            row = tk.Frame(self.sidebar, bg="#10202b" if active else SIDE, padx=10, pady=9)
-            row.pack(fill="x", pady=2)
-            tk.Label(row, text=icon, bg=row["bg"], fg=CYAN if active else MUTED,
-                     font=(FONT, 12), width=2).pack(side="left")
-            tk.Label(row, text=label, bg=row["bg"], fg=INK if active else "#9cb0bb",
-                     font=(FONT, 9, "bold" if active else "normal")).pack(side="left")
+        self.nav_buttons = {}
+        for key, label, icon in (("home", "Command center", "âŒ˜"), ("notes", "My notes", "â–¤"),
+                                 ("timers", "Timers", "â—·"), ("activity", "Activity log", "â‰‹"),
+                                 ("settings", "Settings", "âš™")):
+            button = tk.Button(self.sidebar, text=f"{icon}   {label}", anchor="w", command=lambda k=key: self._show_view(k),
+                               bg=SIDE, fg="#9cb0bb", activebackground="#10202b", activeforeground=INK,
+                               relief="flat", bd=0, cursor="hand2", padx=10, pady=10,
+                               font=(FONT, 9), highlightthickness=0)
+            button.pack(fill="x", pady=2)
+            self.nav_buttons[key] = button
         spacer = tk.Frame(self.sidebar, bg=SIDE)
         spacer.pack(fill="both", expand=True)
         tk.Frame(self.sidebar, bg=LINE, height=1).pack(fill="x", pady=(0, 12))
         self._section_label(self.sidebar, "LOCAL SERVICES")
         self._service_row("â—", "Command engine", "READY", GREEN)
-        self._service_row("â—", "Speech output", "OPTIONAL", AMBER)
-        self._service_row("â—", "Speech input", "OPTIONAL", AMBER)
-        tk.Label(self.sidebar, text="v1.0  Â·  RUNNING LOCALLY", bg=SIDE, fg="#526c79",
+        self.speech_service = self._service_row("â—", "Speech output", "CHECKING", AMBER)
+        self.mic_service = self._service_row("â—", "Speech input", "OPTIONAL", AMBER)
+        tk.Label(self.sidebar, text="v1.1  Â·  RUNNING LOCALLY", bg=SIDE, fg="#526c79",
                  font=(FONT, 7, "bold")).pack(anchor="w", padx=7, pady=(20, 0))
 
-    def _service_row(self, icon: str, title: str, status: str, color: str) -> None:
+    def _service_row(self, icon: str, title: str, status: str, color: str) -> tk.Label:
         row = tk.Frame(self.sidebar, bg=SIDE)
         row.pack(fill="x", padx=7, pady=5)
         tk.Label(row, text=icon, bg=SIDE, fg=color, font=(FONT, 8)).pack(side="left", padx=(0, 7))
         tk.Label(row, text=title, bg=SIDE, fg="#9aadb6", font=(FONT, 8)).pack(side="left")
-        tk.Label(row, text=status, bg=SIDE, fg=color, font=(FONT, 6, "bold")).pack(side="right")
+        status_label = tk.Label(row, text=status, bg=SIDE, fg=color, font=(FONT, 6, "bold"))
+        status_label.pack(side="right")
+        return status_label
 
     def _build_header(self, parent: tk.Widget) -> None:
         header = tk.Frame(parent, bg=BG)
         header.pack(fill="x", pady=(0, 18))
         left = tk.Frame(header, bg=BG)
         left.pack(side="left")
-        tk.Label(left, text="COMMAND CENTER", bg=BG, fg=CYAN_DIM,
-                 font=(FONT, 8, "bold")).pack(anchor="w")
-        tk.Label(left, text="Good to see you, boss.", bg=BG, fg=INK,
-                 font=(FONT, 20, "bold")).pack(anchor="w", pady=(3, 0))
+        self.header_eyebrow = tk.Label(left, text="COMMAND CENTER", bg=BG, fg=CYAN_DIM,
+                                       font=(FONT, 8, "bold"))
+        self.header_eyebrow.pack(anchor="w")
+        self.page_heading = tk.Label(left, text="Good to see you, boss.", bg=BG, fg=INK,
+                                     font=(FONT, 20, "bold"))
+        self.page_heading.pack(anchor="w", pady=(3, 0))
         right = tk.Frame(header, bg=BG)
         right.pack(side="right", anchor="e")
         tk.Label(right, textvariable=self.clock_text, bg=BG, fg=INK,
@@ -145,6 +164,44 @@ class Jarvis(Tk):
                  font=(FONT, 7, "bold")).pack(anchor="e", pady=(3, 0))
 
     def _build_main(self, parent: tk.Widget) -> None:
+        self.view_area = tk.Frame(parent, bg=BG)
+        self.view_area.pack(fill="both", expand=True, pady=(15, 0))
+        self._show_view("home")
+
+    def _show_view(self, key: str) -> None:
+        if self.timer_update_job is not None:
+            try:
+                self.after_cancel(self.timer_update_job)
+            except tk.TclError:
+                pass
+            self.timer_update_job = None
+        self.current_view = key
+        for child in self.view_area.winfo_children():
+            child.destroy()
+        labels = {"home": ("COMMAND CENTER", "Good to see you, boss."),
+                  "notes": ("PERSONAL SCRATCHPAD", "Your notes."),
+                  "timers": ("TIME MANAGEMENT", "Timers & reminders."),
+                  "activity": ("RECENT COMMANDS", "Activity log."),
+                  "settings": ("PREFERENCES", "Make it yours.")}
+        eyebrow, title = labels[key]
+        self.header_eyebrow.configure(text=eyebrow)
+        self.page_heading.configure(text=title)
+        for nav_key, button in self.nav_buttons.items():
+            active = nav_key == key
+            button.configure(bg="#10202b" if active else SIDE, fg=INK if active else "#9cb0bb",
+                             font=(FONT, 9, "bold" if active else "normal"))
+        if key == "home":
+            self._build_dashboard(self.view_area)
+        elif key == "notes":
+            self._build_notes_page(self.view_area)
+        elif key == "timers":
+            self._build_timers_page(self.view_area)
+        elif key == "activity":
+            self._build_activity_page(self.view_area)
+        else:
+            self._build_settings_page(self.view_area)
+
+    def _build_dashboard(self, parent: tk.Widget) -> None:
         self._build_overview(parent)
         content = tk.Frame(parent, bg=BG)
         content.pack(fill="both", expand=True, pady=(15, 0))
@@ -209,6 +266,8 @@ class Jarvis(Tk):
                                       highlightthickness=1, highlightbackground=LINE, highlightcolor=CYAN)
         self.command_entry.pack(side="left", fill="x", expand=True, ipady=10, padx=(0, 7))
         self.command_entry.bind("<Return>", lambda _e: self.submit())
+        self.command_entry.bind("<Up>", self._history_up)
+        self.command_entry.bind("<Down>", self._history_down)
         self.command_entry.insert(0, "Type a commandâ€¦ try â€˜timeâ€™ or â€˜note call the dentistâ€™")
         self.command_entry.configure(fg="#647b88")
         self.command_entry.bind("<FocusIn>", self._clear_placeholder)
@@ -241,9 +300,278 @@ class Jarvis(Tk):
                                     selectforeground=INK, relief="flat", borderwidth=0,
                                     font=(FONT, 8), highlightthickness=0, activestyle="none")
         self.note_list.pack(fill="both", expand=True, pady=(0, 9))
-        self._button(box, "+  Add a note", lambda: self._focus_with("note "), accent=False).pack(fill="x")
+        self.note_list.bind("<Double-1>", lambda _e: self._edit_selected_note(self.note_list))
+        self._button(box, "+  Add a note", lambda: self._edit_note(None), accent=False).pack(fill="x")
+        note_actions = tk.Frame(box, bg=PANEL)
+        note_actions.pack(fill="x", pady=(5, 0))
+        self._button(note_actions, "Edit", lambda: self._edit_selected_note(self.note_list)).pack(side="left", fill="x", expand=True, padx=(0, 3))
+        self._button(note_actions, "Delete", lambda: self._delete_selected_note(self.note_list)).pack(side="left", fill="x", expand=True, padx=(3, 0))
         tk.Label(box, text="Notes stay on this computer.", bg=PANEL, fg="#657c88",
                  font=(FONT, 7)).pack(anchor="w", pady=(10, 0))
+        self._render_notes()
+
+    def _build_notes_page(self, parent: tk.Widget) -> None:
+        toolbar = tk.Frame(parent, bg=BG)
+        toolbar.pack(fill="x", pady=(0, 12))
+        tk.Label(toolbar, text="Write down ideas and reminders. Theyâ€™re stored on this device.",
+                 bg=BG, fg=MUTED, font=(FONT, 9)).pack(side="left")
+        self._button(toolbar, "+  New note", lambda: self._edit_note(None), accent=True).pack(side="right")
+        panel = self._panel(parent, "All notes", "LOCAL Â· PRIVATE")
+        panel.pack(fill="both", expand=True)
+        self.note_count = tk.Label(panel, text="0 saved", bg=PANEL, fg=MUTED, font=(FONT, 8))
+        self.note_count.pack(anchor="w", pady=(0, 8))
+        self.note_list = tk.Listbox(panel, bg="#0b141d", fg="#c1d5dd", selectbackground="#193949",
+                                    selectforeground=INK, relief="flat", borderwidth=0,
+                                    font=(FONT, 9), highlightthickness=0, activestyle="none")
+        self.note_list.pack(fill="both", expand=True, pady=(0, 10))
+        self.note_list.bind("<Double-1>", lambda _e: self._edit_selected_note(self.note_list))
+        actions = tk.Frame(panel, bg=PANEL)
+        actions.pack(fill="x")
+        self._button(actions, "Edit selected", lambda: self._edit_selected_note(self.note_list)).pack(side="left", padx=(0, 6))
+        self._button(actions, "Delete selected", lambda: self._delete_selected_note(self.note_list)).pack(side="left")
+        self._render_notes()
+
+    def _note_index(self, listbox: tk.Listbox) -> int | None:
+        selection = listbox.curselection()
+        if not selection:
+            return None
+        index = len(self.notes) - 1 - int(selection[0])
+        return index if 0 <= index < len(self.notes) else None
+
+    def _edit_selected_note(self, listbox: tk.Listbox) -> None:
+        index = self._note_index(listbox)
+        if index is None:
+            self.respond("Select a note first.")
+            return
+        self._edit_note(index)
+
+    def _edit_note(self, index: int | None) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("New note" if index is None else "Edit note")
+        dialog.configure(bg=BG)
+        dialog.geometry("460x330")
+        dialog.transient(self)
+        dialog.grab_set()
+        tk.Label(dialog, text="NEW NOTE" if index is None else "EDIT NOTE", bg=BG, fg=CYAN_DIM,
+                 font=(FONT, 8, "bold")).pack(anchor="w", padx=18, pady=(16, 7))
+        editor = tk.Text(dialog, bg="#0b141d", fg=INK, insertbackground=CYAN, wrap="word",
+                         relief="flat", font=(FONT, 10), padx=11, pady=10)
+        editor.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+        if index is not None:
+            editor.insert("1.0", self.notes[index]["text"])
+        actions = tk.Frame(dialog, bg=BG)
+        actions.pack(fill="x", padx=18, pady=(0, 16))
+
+        def save_note() -> None:
+            content = editor.get("1.0", "end-1c").strip()
+            if not content:
+                messagebox.showinfo("Empty note", "Add a little text before saving.", parent=dialog)
+                return
+            previous = self.notes[index].copy() if index is not None else None
+            if index is None:
+                self.notes.append({"text": content, "created": datetime.now().isoformat(timespec="minutes")})
+            else:
+                self.notes[index]["text"] = content
+                self.notes[index]["updated"] = datetime.now().isoformat(timespec="minutes")
+            if not self._save_notes():
+                if index is None:
+                    self.notes.pop()
+                else:
+                    self.notes[index] = previous
+                return
+            self._render_notes()
+            self._log("Saved a note.", "system")
+            dialog.destroy()
+
+        self._button(actions, "Cancel", dialog.destroy).pack(side="right", padx=(6, 0))
+        self._button(actions, "Save note", save_note, accent=True).pack(side="right")
+        editor.focus_set()
+
+    def _delete_selected_note(self, listbox: tk.Listbox) -> None:
+        index = self._note_index(listbox)
+        if index is None:
+            self.respond("Select a note first.")
+            return
+        if not messagebox.askyesno("Delete note", "Delete this note from this computer?", parent=self):
+            return
+        deleted = self.notes.pop(index)
+        if not self._save_notes():
+            self.notes.insert(index, deleted)
+            return
+        self._render_notes()
+        self._log("Deleted a note.", "system")
+
+    def _save_notes(self) -> bool:
+        try:
+            NOTES_PATH.write_text(json.dumps(self.notes, ensure_ascii=False, indent=2), encoding="utf-8")
+            return True
+        except OSError as error:
+            messagebox.showerror("Could not save notes", str(error), parent=self)
+            return False
+
+    def _build_timers_page(self, parent: tk.Widget) -> None:
+        intro = tk.Frame(parent, bg=BG)
+        intro.pack(fill="x", pady=(0, 13))
+        tk.Label(intro, text="Timers keep running while JARVIS is open.", bg=BG, fg=MUTED,
+                 font=(FONT, 9)).pack(side="left")
+        create = tk.Frame(parent, bg=PANEL, padx=14, pady=12, highlightthickness=1, highlightbackground=LINE)
+        create.pack(fill="x", pady=(0, 12))
+        tk.Label(create, text="START A TIMER", bg=PANEL, fg=CYAN_DIM, font=(FONT, 7, "bold")).pack(anchor="w")
+        row = tk.Frame(create, bg=PANEL)
+        row.pack(fill="x", pady=(8, 0))
+        self.timer_entry = tk.Entry(row, bg="#0b141d", fg=INK, insertbackground=CYAN,
+                                    relief="flat", font=(FONT, 10), highlightthickness=1,
+                                    highlightbackground=LINE)
+        self.timer_entry.pack(side="left", fill="x", expand=True, ipady=8, padx=(0, 8))
+        self.timer_entry.insert(0, "e.g. 5 minutes")
+        self.timer_entry.bind("<FocusIn>", lambda _e: self._timer_placeholder(False))
+        self.timer_entry.bind("<Return>", lambda _e: self._start_timer_from_field())
+        self._button(row, "Start timer", self._start_timer_from_field, accent=True).pack(side="right")
+        panel = self._panel(parent, "Active timers", "LIVE COUNTDOWN")
+        panel.pack(fill="both", expand=True)
+        self.timer_list = tk.Listbox(panel, bg="#0b141d", fg="#c1d5dd", selectbackground="#193949",
+                                     selectforeground=INK, relief="flat", borderwidth=0,
+                                     font=(FONT, 10), highlightthickness=0, activestyle="none")
+        self.timer_list.pack(fill="both", expand=True, pady=(0, 10))
+        actions = tk.Frame(panel, bg=PANEL)
+        actions.pack(fill="x")
+        self._button(actions, "Cancel selected", self._cancel_selected_timer).pack(side="left")
+        self._button(actions, "Cancel latest", self._cancel_timer).pack(side="left", padx=6)
+        self._render_timers()
+        self._schedule_timer_refresh()
+
+    def _timer_placeholder(self, restore: bool) -> None:
+        if not hasattr(self, "timer_entry") or not self.timer_entry.winfo_exists():
+            return
+        if restore and not self.timer_entry.get().strip():
+            self.timer_entry.insert(0, "e.g. 5 minutes")
+            self.timer_entry.configure(fg="#647b88")
+        elif not restore and self.timer_entry.get() == "e.g. 5 minutes":
+            self.timer_entry.delete(0, END)
+            self.timer_entry.configure(fg=INK)
+
+    def _start_timer_from_field(self) -> None:
+        value = self.timer_entry.get().strip()
+        if value == "e.g. 5 minutes":
+            value = ""
+        started = self._start_timer("timer " + value)
+        if started:
+            self.timer_entry.delete(0, END)
+            self._timer_placeholder(True)
+
+    def _render_timers(self) -> None:
+        if not hasattr(self, "timer_list") or not self.timer_list.winfo_exists():
+            return
+        selected = self.timer_list.curselection()
+        timer_ids = list(self.active_timers)
+        selected_id = timer_ids[int(selected[0])] if selected and int(selected[0]) < len(timer_ids) else None
+        self.timer_list.delete(0, END)
+        now = time.monotonic()
+        for index, (timer_id, timer) in enumerate(self.active_timers.items()):
+            remaining = max(0, int(timer["deadline"] - now + .999))
+            minutes, seconds = divmod(remaining, 60)
+            hours, minutes = divmod(minutes, 60)
+            countdown = f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+            self.timer_list.insert(END, f"  {countdown}     {timer['label']}")
+            if timer_id == selected_id:
+                self.timer_list.selection_set(index)
+        if not self.active_timers:
+            self.timer_list.insert(END, "  No active timers. Start one above or say â€˜timer 5 minutesâ€™.")
+
+    def _schedule_timer_refresh(self) -> None:
+        if self.current_view == "timers":
+            self._render_timers()
+            self.timer_update_job = self.after(1000, self._schedule_timer_refresh)
+
+    def _cancel_selected_timer(self) -> None:
+        if not self.active_timers:
+            self.respond("There are no active timers.")
+            return
+        selection = self.timer_list.curselection()
+        if not selection or selection[0] >= len(self.active_timers):
+            self.respond("Select an active timer first.")
+            return
+        timer_id = list(self.active_timers)[int(selection[0])]
+        self._cancel_timer_id(timer_id)
+
+    def _build_activity_page(self, parent: tk.Widget) -> None:
+        toolbar = tk.Frame(parent, bg=BG)
+        toolbar.pack(fill="x", pady=(0, 12))
+        tk.Label(toolbar, text="Recent commands and actions from this session.", bg=BG, fg=MUTED,
+                 font=(FONT, 9)).pack(side="left")
+        self._button(toolbar, "Clear log", self._clear_activity).pack(side="right")
+        panel = self._panel(parent, "Session activity", "KEPT IN MEMORY Â· CLEARED WHEN THE APP CLOSES")
+        panel.pack(fill="both", expand=True)
+        self.activity_list = tk.Listbox(panel, bg="#0b141d", fg="#c1d5dd", selectbackground="#193949",
+                                        selectforeground=INK, relief="flat", borderwidth=0,
+                                        font=("Consolas", 9), highlightthickness=0, activestyle="none")
+        self.activity_list.pack(fill="both", expand=True)
+        self._render_activity()
+
+    def _render_activity(self) -> None:
+        if not hasattr(self, "activity_list") or not self.activity_list.winfo_exists():
+            return
+        self.activity_list.delete(0, END)
+        for item in self.activity[-250:]:
+            self.activity_list.insert(END, f"  {item['time']}   {item['text']}")
+        self.activity_list.see(END)
+
+    def _clear_activity(self) -> None:
+        if messagebox.askyesno("Clear activity", "Clear this sessionâ€™s activity log?", parent=self):
+            self.activity.clear()
+            self._render_activity()
+
+    def _build_settings_page(self, parent: tk.Widget) -> None:
+        grid = tk.Frame(parent, bg=BG)
+        grid.pack(fill="both", expand=True)
+        privacy = self._panel(grid, "Privacy & local data", "YOUR DEVICE")
+        privacy.pack(fill="x", pady=(0, 12))
+        tk.Label(privacy, text="Notes are saved in jarvis_notes.json beside the app. Activity stays in memory and clears when you close JARVIS.\n\nVoice transcription uses Google Speech Recognition and sends recorded microphone audio for transcription. Spoken replies use pyttsx3 and your computerâ€™s installed voice.",
+                 bg=PANEL, fg="#9cb0bb", justify="left", wraplength=650, font=(FONT, 9)).pack(anchor="w")
+        voice = self._panel(grid, "Voice", "OPTIONAL FEATURES")
+        voice.pack(fill="x", pady=(0, 12))
+        self.voice_toggle = tk.BooleanVar(value=self.speech_enabled)
+        tk.Checkbutton(voice, text="Speak JARVIS replies aloud when speech output is installed",
+                       variable=self.voice_toggle, command=self._toggle_speech,
+                       bg=PANEL, fg=INK, selectcolor="#0b141d", activebackground=PANEL,
+                       activeforeground=INK, font=(FONT, 9)).pack(anchor="w")
+        self._button(voice, "Check voice packages", self._check_voice_packages).pack(anchor="w", pady=(9, 0))
+        system = self._panel(grid, "System integrations", "AVAILABLE COMMANDS")
+        system.pack(fill="x")
+        tk.Label(system, text="App launching is limited to the named shortcuts in the command list. JARVIS does not run arbitrary terminal commands. Add more fixed shortcuts in jarvis.py when you want to expand it.",
+                 bg=PANEL, fg="#9cb0bb", justify="left", wraplength=650, font=(FONT, 9)).pack(anchor="w")
+
+    def _toggle_speech(self) -> None:
+        self.speech_enabled = self.voice_toggle.get()
+        self.respond("Spoken replies enabled." if self.speech_enabled else "Spoken replies muted.")
+
+    def _check_voice_packages(self) -> None:
+        threading.Thread(target=self._voice_package_check_worker, daemon=True).start()
+
+    def _voice_package_check_worker(self) -> None:
+        try:
+            import speech_recognition  # type: ignore # noqa: F401
+            import pyaudio  # type: ignore # noqa: F401
+            mic = True
+        except Exception:
+            mic = False
+        try:
+            import pyttsx3  # type: ignore # noqa: F401
+            tts = True
+        except Exception:
+            tts = False
+        self.microphone_available = mic
+        self.speech_available = tts
+        self.after(0, self._update_voice_status)
+
+    def _update_voice_status(self) -> None:
+        if not hasattr(self, "speech_service"):
+            return
+        self.speech_service.configure(text="READY" if self.speech_available else "NOT INSTALLED",
+                                      fg=GREEN if self.speech_available else AMBER)
+        self.mic_service.configure(text="READY" if self.microphone_available else "NOT INSTALLED",
+                                   fg=GREEN if self.microphone_available else AMBER)
+        self.listen_text.set("VOICE INPUT READY" if self.microphone_available else "TEXT COMMANDS READY")
 
     def _button(self, parent: tk.Widget, text: str, command, accent: bool = False, padx: int = 10) -> tk.Button:
         bg = "#17404d" if accent else "#13212c"
@@ -255,11 +583,16 @@ class Jarvis(Tk):
     def _log(self, text: str, tag: str = "normal") -> None:
         if not hasattr(self, "log"):
             return
+        if tag in ("normal", "user", "system"):
+            self.activity.append({"time": datetime.now().strftime("%H:%M:%S"), "text": text})
+            del self.activity[:-250]
         self.log.configure(state="normal")
         prefix = "" if tag == "muted" else ("YOU   â€º  " if tag == "user" else "JARVIS â€º  " if tag == "normal" else "")
         self.log.insert(END, prefix + text + "\n", tag)
         self.log.see(END)
         self.log.configure(state="disabled")
+        if self.current_view == "activity":
+            self._render_activity()
 
     def _clear_placeholder(self, _event=None) -> None:
         if self.command.get().startswith("Type a command"):
@@ -282,9 +615,28 @@ class Jarvis(Tk):
         if not text or text.startswith("Type a command"):
             return
         self.command.set("")
+        self.command_history.append(text)
+        self.history_cursor = len(self.command_history)
         self.command_entry.configure(fg=INK)
         self._log(text, "user")
         self.handle(text)
+
+    def _history_up(self, _event=None):
+        if self.command_history:
+            self.history_cursor = max(0, self.history_cursor - 1)
+            self.command.set(self.command_history[self.history_cursor])
+            self.command_entry.configure(fg=INK)
+            self.command_entry.icursor(END)
+        return "break"
+
+    def _history_down(self, _event=None):
+        if self.command_history:
+            self.history_cursor = min(len(self.command_history), self.history_cursor + 1)
+            value = self.command_history[self.history_cursor] if self.history_cursor < len(self.command_history) else ""
+            self.command.set(value)
+            self.command_entry.configure(fg=INK)
+            self.command_entry.icursor(END)
+        return "break"
 
     def handle(self, raw: str) -> None:
         text = raw.strip()
@@ -314,7 +666,7 @@ class Jarvis(Tk):
         elif low.startswith("search "):
             query = text[7:].strip()
             if query:
-                webbrowser.open("https://www.google.com/search?q=" + __import__("urllib.parse", fromlist=["quote_plus"]).quote_plus(query))
+                webbrowser.open("https://www.google.com/search?q=" + quote_plus(query))
                 self.respond(f"Searching the web for {query}.")
             else:
                 self.respond("Tell me what you want to search for.")
@@ -327,7 +679,7 @@ class Jarvis(Tk):
 
     def respond(self, text: str) -> None:
         self._log(text)
-        if self.speech_available:
+        if self.speech_available and self.speech_enabled:
             self.speech_queue.put(text)
 
     def _add_note(self, content: str) -> None:
@@ -335,16 +687,14 @@ class Jarvis(Tk):
             self.respond("What would you like me to write down?")
             return
         self.notes.append({"text": content, "created": datetime.now().isoformat(timespec="minutes")})
-        try:
-            NOTES_PATH.write_text(json.dumps(self.notes, ensure_ascii=False, indent=2), encoding="utf-8")
-        except OSError as error:
-            self.respond(f"I could not save that note: {error}")
+        if not self._save_notes():
+            self.notes.pop()
             return
         self._render_notes()
         self.respond("Noted. I saved that on this computer.")
 
     def _render_notes(self) -> None:
-        if not hasattr(self, "note_list"):
+        if not hasattr(self, "note_list") or not self.note_list.winfo_exists():
             return
         self.note_list.delete(0, END)
         for item in reversed(self.notes[-20:]):
@@ -352,25 +702,32 @@ class Jarvis(Tk):
             self.note_list.insert(END, summary[:58] + ("â€¦" if len(summary) > 58 else ""))
         self.note_count.configure(text=f"{len(self.notes)} saved")
 
-    def _start_timer(self, raw: str) -> None:
+    def _start_timer(self, raw: str) -> bool:
         match = re.search(r"(\d+)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)", raw, re.I)
         if not match:
             self.respond("Try a timer like â€˜timer 5 minutesâ€™ or â€˜timer 30 secondsâ€™.")
-            return
+            return False
         amount = int(match.group(1))
         unit = match.group(2).lower()
         factor = 3600 if unit.startswith(("hour", "hr")) else 60 if unit.startswith(("minute", "min")) else 1
         total = amount * factor
         if not 1 <= total <= 86400:
             self.respond("Choose a timer from one second up to 24 hours.")
-            return
-        timer_id = self.after(total * 1000, lambda: self._timer_finished(timer_id))
-        self.active_timers[timer_id] = f"{amount} {unit}"
+            return False
+        self.timer_serial += 1
+        timer_id = self.timer_serial
+        deadline = time.monotonic() + total
+        after_id = self.after(total * 1000, lambda: self._timer_finished(timer_id))
+        self.active_timers[timer_id] = {"label": f"{amount} {unit}", "deadline": deadline, "after_id": after_id}
+        self._render_timers()
         self.respond(f"Timer started for {amount} {unit}.")
+        return True
 
     def _timer_finished(self, timer_id: int) -> None:
         if self.active_timers.pop(timer_id, None) is not None:
+            self._render_timers()
             self.status_text.set("TIMER COMPLETE Â· CHECK IN")
+            self.bell()
             self.respond("Your timer is up.")
             self.after(6000, lambda: self.status_text.set("ALL SYSTEMS NOMINAL"))
 
@@ -379,9 +736,18 @@ class Jarvis(Tk):
             self.respond("There are no active timers.")
             return
         timer_id = next(reversed(self.active_timers))
-        label = self.active_timers.pop(timer_id)
-        self.after_cancel(timer_id)
-        self.respond(f"Cancelled the {label} timer.")
+        self._cancel_timer_id(timer_id)
+
+    def _cancel_timer_id(self, timer_id: int) -> None:
+        timer = self.active_timers.pop(timer_id, None)
+        if timer is None:
+            return
+        try:
+            self.after_cancel(timer["after_id"])
+        except tk.TclError:
+            pass
+        self._render_timers()
+        self.respond(f"Cancelled the {timer['label']} timer.")
 
     def _open_target(self, target: str) -> None:
         key = target.lower().strip()
@@ -445,12 +811,16 @@ class Jarvis(Tk):
         self.after(1000, self._refresh_clock)
 
     def listen(self) -> None:
-        if not self.speech_available:
-            self.listen_text.set("VOICE PACKAGES NOT INSTALLED")
-            self.respond("Voice input is optional. Install the packages from requirements.txt, then restart me. Text commands are ready now.")
+        if self.listening:
+            self.respond("Iâ€™m already listening. Finish your command or wait for the timeout.")
+            return
+        if not self.microphone_available:
+            self.listen_text.set("VOICE INPUT NOT READY")
+            self.respond("Voice input needs SpeechRecognition and PyAudio. Install the packages from requirements.txt, then use Check voice packages in Settings. Text commands are ready now.")
             return
         self.listen_text.set("LISTENING Â· SAY A COMMAND")
         self.status_text.set("MICROPHONE ACTIVE")
+        self.listening = True
         threading.Thread(target=self._listen_worker, daemon=True).start()
 
     def _listen_worker(self) -> None:
@@ -471,12 +841,16 @@ class Jarvis(Tk):
             self.after(0, lambda: self._listen_failed(detail))
 
     def _heard_command(self, text: str) -> None:
+        self.listening = False
         self.listen_text.set("VOICE INPUT READY")
         self.status_text.set("ALL SYSTEMS NOMINAL")
+        self.command_history.append(text)
+        self.history_cursor = len(self.command_history)
         self._log(text, "user")
         self.handle(text)
 
     def _listen_failed(self, detail: str) -> None:
+        self.listening = False
         self.listen_text.set("VOICE INPUT READY")
         self.status_text.set("ALL SYSTEMS NOMINAL")
         self.respond(detail)
@@ -500,9 +874,14 @@ class Jarvis(Tk):
                 pass
 
     def _close(self) -> None:
-        for timer_id in list(self.active_timers):
+        for timer in list(self.active_timers.values()):
             try:
-                self.after_cancel(timer_id)
+                self.after_cancel(timer["after_id"])
+            except tk.TclError:
+                pass
+        if self.timer_update_job is not None:
+            try:
+                self.after_cancel(self.timer_update_job)
             except tk.TclError:
                 pass
         self.speech_queue.put(None)
