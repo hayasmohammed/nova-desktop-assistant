@@ -1,4 +1,4 @@
-"""JARVIS â€” a local desktop assistant with a voice-ready command console.
+"""NOVA â€” a local desktop assistant with a voice-ready command console.
 
 Run with: python jarvis.py
 Voice input is optional; install requirements.txt and allow microphone access.
@@ -23,7 +23,8 @@ import tkinter as tk
 
 
 ROOT = Path(__file__).resolve().parent
-NOTES_PATH = ROOT / "jarvis_notes.json"
+NOTES_PATH = ROOT / "nova_notes.json"
+LEGACY_NOTES_PATH = ROOT / "jarvis_notes.json"
 BG = "#080e15"
 SIDE = "#0b131d"
 PANEL = "#101b27"
@@ -40,16 +41,17 @@ FONT = "Segoe UI"
 
 def load_notes() -> list[dict]:
     try:
-        value = json.loads(NOTES_PATH.read_text(encoding="utf-8"))
+        source = NOTES_PATH if NOTES_PATH.exists() else LEGACY_NOTES_PATH
+        value = json.loads(source.read_text(encoding="utf-8"))
         return [x for x in value if isinstance(x, dict) and x.get("text")] if isinstance(value, list) else []
     except (OSError, json.JSONDecodeError):
         return []
 
 
-class Jarvis(Tk):
+class Nova(Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("J.A.R.V.I.S. â€” Personal Desktop Assistant")
+        self.title("NOVA â€” Personal Desktop Assistant")
         self.geometry("1120x760")
         self.minsize(850, 620)
         self.configure(bg=BG)
@@ -112,7 +114,7 @@ class Jarvis(Tk):
         mark.create_oval(2, 2, 27, 27, outline=CYAN_DIM, width=1)
         mark.create_oval(7, 7, 22, 22, outline=CYAN, width=1)
         mark.create_oval(12, 12, 17, 17, fill=CYAN, outline="")
-        tk.Label(brand, text="J.A.R.V.I.S.", bg=SIDE, fg=INK,
+        tk.Label(brand, text="NOVA", bg=SIDE, fg=INK,
                  font=(FONT, 13, "bold")).pack(side="left")
         tk.Label(self.sidebar, text="PERSONAL SYSTEM", bg=SIDE, fg="#567080",
                  font=(FONT, 8, "bold")).pack(anchor="w", padx=7, pady=(0, 10))
@@ -256,7 +258,7 @@ class Jarvis(Tk):
         self.log.tag_configure("system", foreground=CYAN, font=("Consolas", 9, "bold"))
         self.log.tag_configure("user", foreground="#e7c27a")
         self.log.tag_configure("muted", foreground="#738a97", font=("Consolas", 8))
-        self._log("J.A.R.V.I.S. ONLINE", "system")
+        self._log("NOVA ONLINE", "system")
         self._log("At your service. Try â€˜helpâ€™ to see what I can do.", "normal")
         self._log("Voice recognition sends microphone audio to Google for transcription.", "muted")
         input_row = tk.Frame(console, bg=PANEL)
@@ -412,7 +414,7 @@ class Jarvis(Tk):
     def _build_timers_page(self, parent: tk.Widget) -> None:
         intro = tk.Frame(parent, bg=BG)
         intro.pack(fill="x", pady=(0, 13))
-        tk.Label(intro, text="Timers keep running while JARVIS is open.", bg=BG, fg=MUTED,
+        tk.Label(intro, text="Timers keep running while NOVA is open.", bg=BG, fg=MUTED,
                  font=(FONT, 9)).pack(side="left")
         create = tk.Frame(parent, bg=PANEL, padx=14, pady=12, highlightthickness=1, highlightbackground=LINE)
         create.pack(fill="x", pady=(0, 12))
@@ -526,19 +528,19 @@ class Jarvis(Tk):
         grid.pack(fill="both", expand=True)
         privacy = self._panel(grid, "Privacy & local data", "YOUR DEVICE")
         privacy.pack(fill="x", pady=(0, 12))
-        tk.Label(privacy, text="Notes are saved in jarvis_notes.json beside the app. Activity stays in memory and clears when you close JARVIS.\n\nVoice transcription uses Google Speech Recognition and sends recorded microphone audio for transcription. Spoken replies use pyttsx3 and your computerâ€™s installed voice.",
+        tk.Label(privacy, text="Notes are saved in nova_notes.json beside the app. Activity stays in memory and clears when you close NOVA.\n\nVoice transcription uses Google Speech Recognition and sends recorded microphone audio for transcription. Spoken replies use pyttsx3 and your computerâ€™s installed voice.",
                  bg=PANEL, fg="#9cb0bb", justify="left", wraplength=650, font=(FONT, 9)).pack(anchor="w")
         voice = self._panel(grid, "Voice", "OPTIONAL FEATURES")
         voice.pack(fill="x", pady=(0, 12))
         self.voice_toggle = tk.BooleanVar(value=self.speech_enabled)
-        tk.Checkbutton(voice, text="Speak JARVIS replies aloud when speech output is installed",
+        tk.Checkbutton(voice, text="Speak NOVA replies aloud when speech output is installed",
                        variable=self.voice_toggle, command=self._toggle_speech,
                        bg=PANEL, fg=INK, selectcolor="#0b141d", activebackground=PANEL,
                        activeforeground=INK, font=(FONT, 9)).pack(anchor="w")
         self._button(voice, "Check voice packages", self._check_voice_packages).pack(anchor="w", pady=(9, 0))
         system = self._panel(grid, "System integrations", "AVAILABLE COMMANDS")
         system.pack(fill="x")
-        tk.Label(system, text="App launching is limited to the named shortcuts in the command list. JARVIS does not run arbitrary terminal commands. Add more fixed shortcuts in jarvis.py when you want to expand it.",
+        tk.Label(system, text="App launching is limited to the named shortcuts in the command list. NOVA does not run arbitrary terminal commands. Add more fixed shortcuts in jarvis.py when you want to expand it.",
                  bg=PANEL, fg="#9cb0bb", justify="left", wraplength=650, font=(FONT, 9)).pack(anchor="w")
 
     def _toggle_speech(self) -> None:
@@ -587,7 +589,7 @@ class Jarvis(Tk):
             self.activity.append({"time": datetime.now().strftime("%H:%M:%S"), "text": text})
             del self.activity[:-250]
         self.log.configure(state="normal")
-        prefix = "" if tag == "muted" else ("YOU   â€º  " if tag == "user" else "JARVIS â€º  " if tag == "normal" else "")
+        prefix = "" if tag == "muted" else ("YOU   â€º  " if tag == "user" else "NOVA  â€º  " if tag == "normal" else "")
         self.log.insert(END, prefix + text + "\n", tag)
         self.log.see(END)
         self.log.configure(state="disabled")
@@ -641,7 +643,7 @@ class Jarvis(Tk):
     def handle(self, raw: str) -> None:
         text = raw.strip()
         low = text.lower()
-        if low in ("hi", "hello", "hey", "hey jarvis", "hello jarvis"):
+        if low in ("hi", "hello", "hey", "hey nova", "hello nova"):
             self.respond("Hello. What can I help you with?")
         elif low in ("help", "commands", "what can you do"):
             self.respond("Try: time Â· date Â· system status Â· note <text> Â· show notes Â· timer 5 minutes Â· cancel timer Â· open calculator Â· open notepad Â· open YouTube Â· search <words>.")
@@ -889,5 +891,5 @@ class Jarvis(Tk):
 
 
 if __name__ == "__main__":
-    Jarvis().mainloop()
+    Nova().mainloop()
 

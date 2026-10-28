@@ -1,6 +1,6 @@
-# J.A.R.V.I.S. Desktop Assistant
+# NOVA â€” Desktop AI Assistant
 
-A sci-fi inspired desktop command center built with Python and Tkinter. The controls are connected to working features: command navigation, editable local notes, live timer countdowns, a session activity log, system metrics, push-to-talk voice input, spoken replies, web search, and fixed app shortcuts.
+A sci-fi inspired desktop command center built with Python and Tkinter. The controls are connected to working features: command navigation, editable local notes, live timer countdowns, a session activity log, system metrics, push-to-talk voice input, spoken replies, web search, and fixed app shortcuts. The project is now named **NOVA**. The source file remains `jarvis.py` so existing launch instructions and IDE tabs continue to work.
 
 ## Start
 
@@ -17,9 +17,9 @@ The text command console uses only the Python standard library. Live CPU and mem
 py -m pip install -r requirements.txt
 ```
 
-Voice input needs microphone access and an internet connection for Google speech recognition. Microphone audio is sent to Google for transcription; JARVIS does not store the audio. Text commands and notes stay local. Spoken replies use the computer's installed speech engine through `pyttsx3`.
+Voice input needs microphone access and an internet connection for Google speech recognition. Microphone audio is sent to Google for transcription; NOVA does not store the audio. Text commands and notes stay local. Spoken replies use the computer's installed speech engine through `pyttsx3`.
 
-If voice packages are installed while JARVIS is open, visit **Settings â†’ Check voice packages**. Otherwise restart the app after installing them.
+If voice packages are installed while NOVA is open, visit **Settings â†’ Check voice packages**. Otherwise restart the app after installing them.
 
 ## Commands
 
@@ -35,7 +35,7 @@ If voice packages are installed while JARVIS is open, visit **Settings â†’ 
 
 Use the sidebar to open **My notes**, **Timers**, **Activity log**, and **Settings**. Notes can be edited or deleted, timers show a live countdown and can be cancelled individually, and the command box recalls previous commands with the up/down arrow keys. Press `Ctrl+L` to jump back to the command box.
 
-Notes are saved to `jarvis_notes.json` beside the app. Timers run while JARVIS is open. The activity log is kept in memory and clears when the app closes. App launch commands are handled locally with fixed, known application names; the assistant does not execute arbitrary shell commands.
+Notes are saved to `nova_notes.json` beside the app. Existing `jarvis_notes.json` notes are loaded automatically for migration. Timers run while NOVA is open. The activity log is kept in memory and clears when the app closes. App launch commands are handled locally with fixed, known application names; the assistant does not execute arbitrary shell commands.
 
 ## Files
 
