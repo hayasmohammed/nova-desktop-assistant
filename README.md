@@ -1,6 +1,6 @@
 # NOVA â€” Desktop AI Assistant
 
-A sci-fi inspired desktop command center built with Python and Tkinter. The controls are connected to working features: command navigation, editable local notes, live timer countdowns, a session activity log, system metrics, push-to-talk voice input, spoken replies, web search, and fixed app shortcuts. The project is now named **NOVA**. The source file remains `jarvis.py` so existing launch instructions and IDE tabs continue to work.
+A sci-fi inspired desktop command center built with Python and Tkinter. The controls are connected to working features: command navigation, editable local notes, live timer countdowns, a session activity log, system metrics, push-to-talk voice input, spoken replies, web search, and fixed app shortcuts.
 
 ## Start
 
@@ -8,7 +8,7 @@ A sci-fi inspired desktop command center built with Python and Tkinter. The cont
 2. In this folder, run:
 
    ```powershell
-   py jarvis.py
+   py nova.py
    ```
 
 The text command console uses only the Python standard library. Live CPU and memory readings need `psutil`; voice commands and spoken replies are optional add-ons:
@@ -39,6 +39,6 @@ Notes are saved to `nova_notes.json` beside the app. Existing `jarvis_notes.json
 
 ## Files
 
-- `jarvis.py` â€” desktop interface and assistant behavior
+- `nova.py` â€” desktop interface and assistant behavior
 - `requirements.txt` â€” optional system metrics and voice packages
 

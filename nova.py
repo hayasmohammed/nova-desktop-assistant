@@ -1,6 +1,6 @@
 """NOVA â€” a local desktop assistant with a voice-ready command console.
 
-Run with: python jarvis.py
+Run with: python nova.py
 Voice input is optional; install requirements.txt and allow microphone access.
 """
 from __future__ import annotations
@@ -540,7 +540,7 @@ class Nova(Tk):
         self._button(voice, "Check voice packages", self._check_voice_packages).pack(anchor="w", pady=(9, 0))
         system = self._panel(grid, "System integrations", "AVAILABLE COMMANDS")
         system.pack(fill="x")
-        tk.Label(system, text="App launching is limited to the named shortcuts in the command list. NOVA does not run arbitrary terminal commands. Add more fixed shortcuts in jarvis.py when you want to expand it.",
+        tk.Label(system, text="App launching is limited to the named shortcuts in the command list. NOVA does not run arbitrary terminal commands. Add more fixed shortcuts in nova.py when you want to expand it.",
                  bg=PANEL, fg="#9cb0bb", justify="left", wraplength=650, font=(FONT, 9)).pack(anchor="w")
 
     def _toggle_speech(self) -> None:
