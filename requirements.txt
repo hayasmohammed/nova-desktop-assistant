@@ -2,5 +2,4 @@
 psutil>=6.0.0
 pyttsx3>=2.90
 SpeechRecognition>=3.10.0
-PyAudio>=0.2.14
-
+pywebview>=5.4

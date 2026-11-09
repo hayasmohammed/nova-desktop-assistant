@@ -1,9 +1,24 @@
-__pycache__/
-*.py[cod]
+# Python environments and bytecode
 .venv/
 venv/
-jarvis_notes.json
+__pycache__/
+*.py[cod]
+
+# Local secrets and user data
+.env
+.env.*
+!.env.example
+nova_chats*.json
 nova_notes.json
+
+# Local recordings and downloaded voice/model assets
+*.wav
+*.onnx
+*.gguf
+voices/
+
+# Local editor and generated project files
 .idea/
 .vscode/
-
+NOVA_projects/
+NOVA Projects/
